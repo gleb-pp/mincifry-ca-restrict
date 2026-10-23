@@ -41,7 +41,7 @@ usage() {
 
 Переменные окружения:
   MINCIFRY_DIR   рабочая папка (по умолчанию ~/mincifry-restricted)
-  ROOT_CA        путь к russian_trusted_root_ca_pem.crt, если он лежит в другом месте
+  ROOT_CA        путь к корневому сертификату Минцифры (.cer/.crt/.pem), если скрипт не нашёл его сам
 
 Для каждого сайта автоматически разрешаются и сам домен, и все его поддомены.
 Кириллические домены (.рф) указывайте в punycode (например, xn--p1ai).
@@ -125,23 +125,46 @@ find_openssl() {
 OSSL="$(find_openssl)" || die "Не найден OpenSSL 3 от Homebrew. Установите: brew install openssl@3
 (системный LibreSSL не поддерживает нужную опцию -force_pubkey)."
 
+# Принимает сертификат в PEM или в DER (.cer) и записывает PEM в файл $2
+to_pem() {
+  if grep -q "BEGIN CERTIFICATE" "$1" 2>/dev/null; then
+    cp "$1" "$2"
+  else
+    "$OSSL" x509 -inform DER -in "$1" -out "$2" 2>/dev/null
+  fi
+}
+
+# Файлы сертификатов Минцифры в рабочей папке и в ~/Downloads (ГОСТ-версии пропускаем)
+cert_candidates() {
+  find "$WORKDIR" "$HOME/Downloads" -maxdepth 3 -type f \
+    \( -iname '*.cer' -o -iname '*.crt' -o -iname '*.pem' \) 2>/dev/null \
+    | grep -iE 'russian|trusted' | grep -vi 'gost' || true
+}
+
+ROOT_FILE="$WORKDIR/root_ca.pem"   # PEM-копия найденного корня
+ROOT_SRC=""
+
+# Ищет среди файлов именно корневой сертификат (по имени субъекта), а не Sub CA
 find_root() {
-  local c
-  for c in "${ROOT_CA:-}" \
-           "$WORKDIR/russian_trusted_root_ca_pem.crt" \
-           "$HOME/Downloads/linux_russian_trusted_root_ca_pem/russian_trusted_root_ca_pem.crt"; do
-    if [[ -n "$c" && -f "$c" ]]; then echo "$c"; return 0; fi
-  done
+  local c tmp cands
+  if [[ -n "${ROOT_CA:-}" ]]; then cands="$ROOT_CA"; else cands="$(cert_candidates)"; fi
+  tmp="$(mktemp)"
+  while IFS= read -r c; do
+    [[ -n "$c" && -f "$c" ]] || continue
+    if to_pem "$c" "$tmp" && "$OSSL" x509 -in "$tmp" -noout -subject 2>/dev/null | grep -q "$ROOT_CN"; then
+      cp "$tmp" "$ROOT_FILE"; ROOT_SRC="$c"; rm -f "$tmp"; return 0
+    fi
+  done <<< "$cands"
+  rm -f "$tmp"
   return 1
 }
-ROOT_FILE="$(find_root)" || die "Не найден russian_trusted_root_ca_pem.crt.
-Положите его в $WORKDIR или задайте путь: ROOT_CA=/путь/к/файлу $0 ..."
-
-"$OSSL" x509 -in "$ROOT_FILE" -noout -subject | grep -q "$ROOT_CN" \
-  || die "Файл $ROOT_FILE — не корневой сертификат '$ROOT_CN' (возможно, это Sub CA)."
+find_root || die "Не найден корневой сертификат '$ROOT_CN' (.cer, .crt или .pem).
+Скачайте его на https://www.gosuslugi.ru/crt и положите в $WORKDIR или в ~/Downloads,
+либо укажите путь: ROOT_CA=/путь/к/файлу $0 ...
+(Файлы 'Sub CA' и ГОСТ-версии не подходят — нужен именно Root CA.)"
 
 info "OpenSSL:        $OSSL"
-info "Корень Минцифры: $ROOT_FILE"
+info "Корень Минцифры: $ROOT_SRC"
 info "Сайты (домен и все поддомены):"
 printf '      %s\n' $LIST
 
@@ -193,14 +216,18 @@ rm -f ca.key temp.key ca.srl
 
 # ---------- проверка цепочки ----------
 info "Проверяю цепочку на ваших сайтах..."
+SUBTMP="$(mktemp)"
 {
-  for f in "$WORKDIR"/russian_trusted_sub_ca*.crt "$HOME"/Downloads/russian_trusted_sub_ca_pem/*_pem.crt; do
-    case "$f" in *gost*) continue ;; esac
-    [[ -f "$f" ]] && { cat "$f"; echo; }
-  done
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    if to_pem "$f" "$SUBTMP" && "$OSSL" x509 -in "$SUBTMP" -noout -subject 2>/dev/null | grep -q "Sub CA"; then
+      cat "$SUBTMP"; echo
+    fi
+  done <<< "$(cert_candidates)"
   cat new_root_ca.crt; echo
   cat ca.crt; echo
-} > test-bundle.pem 2>/dev/null
+} > test-bundle.pem
+rm -f "$SUBTMP"
 
 FAILED=0
 for d in $LIST; do
