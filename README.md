@@ -81,8 +81,6 @@ chmod +x certify-*.sh
 
 - **Firefox**: Настройки → Приватность и защита → Сертификаты → Просмотр сертификатов → Центры сертификации. Импортируйте файлы `~/mincifry-restricted/ca.crt` (поставьте галочку «Доверять при идентификации веб-сайтов») и `~/mincifry-restricted/new_root_ca.crt` (галочки не ставьте).
 
-Базы появляются после первого запуска браузера. Если нужной базы нет, запустите браузер один раз и повторите. После импорта полностью перезапустите браузер.
-
 ## 🔄 Дальнейшее использование
 
 К сожалению, после подписания сертификаты нельзя изменить, поэтому при добавлении новых доменов сертификаты нужно пересоздавать заново. К счастью, скрипт уже поддерживает это и позволяет добавлять новые сайты одной командой.
@@ -107,14 +105,13 @@ chmod +x certify-*.sh
 ## ⚠️ Ограничения и нюансы
 
 - Указывайте тот домен, на который реально выдан сертификат. Например, сертификат для `ticket.rzd.ru` выдан на `rzd.ru` и `*.rzd.ru`, поэтому в список нужно вписать `rzd.ru`. Для каждого домена скрипт автоматически разрешает и сам домен, и все его поддомены.
-- Firefox использует собственное хранилище сертификатов, поэтому импортируйте `ca.crt` и `new_root_ca.crt` из рабочей папки вручную (Настройки → Приватность и защита → Сертификаты → Центры сертификации).
+- Если вы подключали сертификаты в браузер вручную, при обновлении списка доменов вам нужно будет снова подключить их в браузер, так как сертификаты пересоздаются заново. 
 
 ## 🛠 Откат изменений
 
 | OS | Действие |
 |----|----------|
 | macOS | Откройте Keychain Access, в связке System найдите сертификаты `My-Restricted-Root` и `Russian Trusted Root CA` и удалите оба |
-| Debian/Ubuntu | `sudo rm /usr/local/share/ca-certificates/mincifry-restricted-*.crt && sudo update-ca-certificates --fresh` |
-| Fedora/RHEL | `sudo rm /etc/pki/ca-trust/source/anchors/mincifry-restricted-*.crt && sudo update-ca-trust` |
+| Debian / Ubuntu / Mint | `sudo rm /usr/local/share/ca-certificates/mincifry-restricted-*.crt && sudo update-ca-certificates --fresh` |
+| Fedora | `sudo rm /etc/pki/ca-trust/source/anchors/mincifry-restricted-*.crt && sudo update-ca-trust` |
 | Arch | `sudo rm /etc/ca-certificates/trust-source/anchors/mincifry-restricted-*.crt && sudo update-ca-trust` |
-| openSUSE | `sudo rm /etc/pki/trust/anchors/mincifry-restricted-*.crt && sudo update-ca-certificates` |

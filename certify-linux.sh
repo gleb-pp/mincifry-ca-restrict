@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 #
-# certify-linux.sh.sh — ограничение корневого сертификата Минцифры списком сайтов (Linux)
+# certify-linux.sh — ограничение корневого сертификата Минцифры списком сайтов (Linux)
 #
 # Что делает:
 #   1. создаёт свой корневой сертификат с nameConstraints (только ваши домены);
 #   2. переподписывает им корень Минцифры (тот же subject и публичный ключ);
 #   3. проверяет цепочку на ваших сайтах;
 #   4. удаляет старые версии из системного хранилища и ставит новые
-#      (Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE).
+#      (Debian/Ubuntu, Fedora, Arch).
 #
 # Браузеры Firefox и Chrome/Chromium на Linux обычно не читают системное хранилище:
 # сертификаты (ca.crt и new_root_ca.crt из рабочей папки) нужно импортировать в них вручную.
 #
 # Примеры:
-#   ./certify-linux.sh.sh rzd.ru job.alfabank.ru     # список = ровно эти сайты
-#   ./certify-linux.sh.sh --add online.sberbank.ru   # дописать к сохранённому списку
-#   ./certify-linux.sh.sh -f my-sites.txt            # список из файла (по одному на строку)
-#   ./certify-linux.sh.sh --list                     # показать сохранённый список
+#   ./certify-linux.sh rzd.ru job.alfabank.ru     # список = ровно эти сайты
+#   ./certify-linux.sh --add online.sberbank.ru   # дописать к сохранённому списку
+#   ./certify-linux.sh -f my-sites.txt            # список из файла (по одному на строку)
+#   ./certify-linux.sh --list                     # показать сохранённый список
 #
 set -euo pipefail
 
@@ -39,7 +39,7 @@ warn() { echo "ВНИМАНИЕ: $*" >&2; }
 
 usage() {
   cat <<'EOF'
-Использование: certify-linux.sh.sh [опции] [сайт ...]
+Использование: certify-linux.sh [опции] [сайт ...]
 
 Опции:
   -a, --add          добавить сайты к ранее сохранённому списку (по умолчанию список заменяется)
@@ -298,16 +298,12 @@ fi
 ANCHOR_DIR=""; UPDATE_CMD=(); BACKEND=""
 detect_trust_backend() {
   local upd
-  if upd="$(command -v update-ca-certificates 2>/dev/null)"; then
-    if [[ -d /etc/pki/trust/anchors ]]; then                       # openSUSE / SLE
-      ANCHOR_DIR=/etc/pki/trust/anchors; UPDATE_CMD=("$upd"); BACKEND="openSUSE"
-    else                                                            # Debian / Ubuntu / Mint
-      ANCHOR_DIR=/usr/local/share/ca-certificates; UPDATE_CMD=("$upd" --fresh); BACKEND="Debian/Ubuntu"
-    fi
+  if upd="$(command -v update-ca-certificates 2>/dev/null)" && [[ -f /etc/debian_version ]]; then
+    ANCHOR_DIR=/usr/local/share/ca-certificates; UPDATE_CMD=("$upd" --fresh); BACKEND="Debian/Ubuntu"
   elif upd="$(command -v update-ca-trust 2>/dev/null)"; then
-    if [[ -d /etc/pki/ca-trust/source/anchors ]]; then              # Fedora / RHEL / CentOS
-      ANCHOR_DIR=/etc/pki/ca-trust/source/anchors; UPDATE_CMD=("$upd"); BACKEND="Fedora/RHEL"
-    elif [[ -d /etc/ca-certificates/trust-source/anchors ]]; then   # Arch / Manjaro
+    if [[ -d /etc/pki/ca-trust/source/anchors ]]; then              # Fedora
+      ANCHOR_DIR=/etc/pki/ca-trust/source/anchors; UPDATE_CMD=("$upd"); BACKEND="Fedora"
+    elif [[ -d /etc/ca-certificates/trust-source/anchors ]]; then   # Arch
       ANCHOR_DIR=/etc/ca-certificates/trust-source/anchors; UPDATE_CMD=("$upd"); BACKEND="Arch"
     else
       return 1
@@ -316,12 +312,12 @@ detect_trust_backend() {
     return 1
   fi
 }
-detect_trust_backend || die "Не удалось определить системное хранилище сертификатов (нет update-ca-certificates / update-ca-trust).
+detect_trust_backend || die "Ваш дистрибутив не поддерживается (скрипт умеет Debian/Ubuntu, Fedora и Arch).
 Сертификаты собраны в $WORKDIR (ca.crt и new_root_ca.crt): установите их вручную по инструкции вашего дистрибутива."
 
 # Каталоги, где мог остаться оригинальный корень Минцифры (в том числе по статье-первоисточнику)
 ANCHOR_SCAN_DIRS=("$ANCHOR_DIR" /usr/local/share/ca-certificates /etc/pki/ca-trust/source/anchors \
-  /usr/share/pki/ca-trust-source/anchors /etc/ca-certificates/trust-source/anchors /etc/pki/trust/anchors)
+  /usr/share/pki/ca-trust-source/anchors /etc/ca-certificates/trust-source/anchors)
 
 find_foreign_roots() {
   local dir f tmp seen=" "
