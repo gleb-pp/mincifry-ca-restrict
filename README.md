@@ -1,4 +1,4 @@
-# Сертификаты Минцифры без доверия «ко всему сразу» (macOS)
+# Сертификаты Минцифры без доверия «ко всему сразу» (Linux, macOS)
 
 Скрипт позволяет пользоваться российскими сайтами, перешедшими на сертификаты Минцифры, **не открывая этому корню доверие для остального интернета**: сертификатам Минцифры будут верить только для тех доменов, которые вы сами перечислите.
 
@@ -44,28 +44,44 @@ openssl x509 -in russian_trusted_root_ca_pem.crt -noout -subject
 
 ### 2. Подготовьте скрипт
 
-Файл `mincifry-certs.sh` в репозитории автоматичеси генерирует корневой сертификат, подписывает его с помощью сертификата Минцифры, добавляет в системную связку ключей и проверяет, что всё работает.
+Файл `certify-*.sh` в репозитории автоматичеси генерирует корневой сертификат, подписывает его с помощью сертификата Минцифры, добавляет в системную связку ключей и проверяет, что всё работает.
 
 Создайте рабочую папку и подготовьте файлы:
 
 ```bash
 mkdir -p ~/mincifry-restricted
-cp mincifry-certs.sh russian_trusted_root_ca_pem.crt ~/mincifry-restricted/
+cp certify-*.sh russian_trusted_root_ca_pem.crt ~/mincifry-restricted/
 cd ~/mincifry-restricted
-chmod +x mincifry-certs.sh
+chmod +x certify-*.sh
 ```
 
 ### 3. Установка
 
 ```bash
 # пробный прогон: сборка и проверка без изменения системы
-./mincifry-certs.sh -n rzd.ru sberbank.ru
+./certify-*.sh -n rzd.ru sberbank.ru
 
 # установка: сборка и добавление в системную связку ключей
-./mincifry-certs.sh rzd.ru sberbank.ru
+./certify-*.sh rzd.ru sberbank.ru
 ```
 
 Скрипт запросит подтверждение и пароль администратора. macOS может показать диалог о доверии сертификату (по одному на каждый из двух сертификатов).
+
+### 4. Импорт сертификатов в браузер
+
+**Для macOS**
+
+Большинство браузеров (Safari, Chrome, Edge, Opera) читают сертификаты из системной связки ключей, дополнительных действий не требуется. Если вы используете **Firefox**, импортируйте сертификаты в браузер вручную по инструкции ниже (такая же как для Linux).
+
+**Для Linux**
+
+Скрипт устанавливает сертификаты в системное хранилище, им пользуются CLI-инструменты типа `curl`, `wget`, `git`, но обычно не пользуются браузеры. Сертификаты нужно импортировать в браузер вручную.
+
+- **Chromium (Chrome, Edge, Opera)**: Настройки → Конфиденциальность и безопасность → Безопасность → Управление сертификатами -> Центры сертификации. Импортируйте файлы `~/mincifry-restricted/ca.crt` (с доверием для сайтов) и `~/mincifry-restricted/new_root_ca.crt` (без доверия).
+
+- **Firefox**: Настройки → Приватность и защита → Сертификаты → Просмотр сертификатов → Центры сертификации. Импортируйте файлы `~/mincifry-restricted/ca.crt` (поставьте галочку «Доверять при идентификации веб-сайтов») и `~/mincifry-restricted/new_root_ca.crt` (галочки не ставьте).
+
+Базы появляются после первого запуска браузера. Если нужной базы нет, запустите браузер один раз и повторите. После импорта полностью перезапустите браузер.
 
 ## 🔄 Дальнейшее использование
 
@@ -73,23 +89,32 @@ chmod +x mincifry-certs.sh
 
 ```bash
 # показать текущий список доменов в списке
-./mincifry-certs.sh --list
+./certify-*.sh --list
 
 # добавить новый доменов в список
-./mincifry-certs.sh --add tbank.ru
+./certify-*.sh --add tbank.ru
 
 # загрузить список доменов из файла (по одному в строке)
-./mincifry-certs.sh -file sites.txt
+./certify-*.sh -file sites.txt
 
 # собрать и проверить сейчас, не трогая систему
-./mincifry-certs.sh -n rzd.ru
+./certify-*.sh -n rzd.ru
 
 # собрать не спрашивая подтверждения
-./mincifry-certs.sh -y rzd.ru
+./certify-*.sh -y rzd.ru
 ```
 
 ## ⚠️ Ограничения и нюансы
 
 - Указывайте тот домен, на который реально выдан сертификат. Например, сертификат для `ticket.rzd.ru` выдан на `rzd.ru` и `*.rzd.ru`, поэтому в список нужно вписать `rzd.ru`. Для каждого домена скрипт автоматически разрешает и сам домен, и все его поддомены.
-- **Firefox** использует собственное хранилище сертификатов, поэтому импортируйте `ca.crt` и `new_root_ca.crt` из рабочей папки вручную (Настройки → Приватность и защита → Сертификаты → Центры сертификации).
-- Для отката изменений откройте Keychain Access, в связке System найдите сертификаты `My-Restricted-Root` и `Russian Trusted Root CA` и удалите оба
+- Firefox использует собственное хранилище сертификатов, поэтому импортируйте `ca.crt` и `new_root_ca.crt` из рабочей папки вручную (Настройки → Приватность и защита → Сертификаты → Центры сертификации).
+
+## 🛠 Откат изменений
+
+| OS | Действие |
+|----|----------|
+| macOS | Откройте Keychain Access, в связке System найдите сертификаты `My-Restricted-Root` и `Russian Trusted Root CA` и удалите оба |
+| Debian/Ubuntu | `sudo rm /usr/local/share/ca-certificates/mincifry-restricted-*.crt && sudo update-ca-certificates --fresh` |
+| Fedora/RHEL | `sudo rm /etc/pki/ca-trust/source/anchors/mincifry-restricted-*.crt && sudo update-ca-trust` |
+| Arch | `sudo rm /etc/ca-certificates/trust-source/anchors/mincifry-restricted-*.crt && sudo update-ca-trust` |
+| openSUSE | `sudo rm /etc/pki/trust/anchors/mincifry-restricted-*.crt && sudo update-ca-certificates` |

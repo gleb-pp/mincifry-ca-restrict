@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# mincifry-certs.sh — ограничение корневого сертификата Минцифры списком сайтов (macOS)
+# certify-macos.sh — ограничение корневого сертификата Минцифры списком сайтов (macOS)
 #
 # Что делает:
 #   1. создаёт свой корневой сертификат с nameConstraints (только ваши домены);
@@ -9,10 +9,10 @@
 #   4. удаляет старые версии из системной связки ключей и ставит новые.
 #
 # Примеры:
-#   ./mincifry-certs.sh ticket.rzd.ru job.alfabank.ru     # список = ровно эти сайты
-#   ./mincifry-certs.sh --add online.sberbank.ru          # дописать к сохранённому списку
-#   ./mincifry-certs.sh -f my-sites.txt                   # список из файла (по одному на строку)
-#   ./mincifry-certs.sh --list                            # показать сохранённый список
+#   ./certify-macos.sh ticket.rzd.ru job.alfabank.ru     # список = ровно эти сайты
+#   ./certify-macos.sh --add online.sberbank.ru          # дописать к сохранённому списку
+#   ./certify-macos.sh -f my-sites.txt                   # список из файла (по одному на строку)
+#   ./certify-macos.sh --list                            # показать сохранённый список
 #
 set -euo pipefail
 
@@ -29,7 +29,7 @@ warn() { echo "ВНИМАНИЕ: $*" >&2; }
 
 usage() {
   cat <<'EOF'
-Использование: mincifry-certs.sh [опции] [сайт ...]
+Использование: certify-macos.sh [опции] [сайт ...]
 
 Опции:
   -a, --add          добавить сайты к ранее сохранённому списку (по умолчанию список заменяется)
