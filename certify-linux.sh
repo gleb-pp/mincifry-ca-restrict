@@ -87,7 +87,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ "$(uname -s)" == "Linux" ]] || die "Этот скрипт рассчитан на Linux. Для macOS используйте mincifry-certs.sh."
+[[ "$(uname -s)" == "Linux" ]] || die "Этот скрипт предназначен для Linux. Для macOS используйте mincifry-certs-macos.sh."
 
 if [[ "$EUID" -eq 0 ]]; then
   [[ -z "${SUDO_USER:-}" ]] || die "Не запускайте через sudo: sudo будет вызван только там, где нужно
@@ -329,7 +329,7 @@ find_foreign_roots() {
     while IFS= read -r f; do
       [[ -n "$f" ]] || continue
       case "$(basename "$f")" in "$OUR_CA_NAME"|"$OUR_RU_NAME") continue ;; esac
-      if to_pem "$f" "$tmp" && "$OSSL" x509 -in "$tmp" -noout -subject 2>/dev/null | grep -q "$ROOT_CN"; then
+      if to_pem "$f" "$tmp" && "$OSSL" x509 -in "$tmp" -noout -subject 2>/dev/null | grep -qE "$ROOT_CN|Russian Trusted Sub CA"; then
         echo "$f"
       fi
     done < <(find "$dir" -maxdepth 1 \( -type f -o -type l \) 2>/dev/null)
@@ -344,7 +344,7 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
   echo "Будет изменено системное хранилище доверия ($BACKEND, каталог $ANCHOR_DIR):"
   echo "  - удалены прежние версии: $OUR_CA_NAME, $OUR_RU_NAME (если есть);"
   if [[ -n "$FOREIGN" ]]; then
-    echo "  - удалены другие файлы с корнем '$ROOT_CN' (иначе он продолжит действовать без ограничений):"
+    echo "  - удалены другие файлы с корневым или промежуточным сертификатом Минцифры (иначе они продолжат действовать без ограничений):"
     printf '      %s\n' $FOREIGN
   fi
   echo "  - установлены новые сертификаты и выполнено: ${UPDATE_CMD[*]}"
