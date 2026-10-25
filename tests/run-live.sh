@@ -61,26 +61,6 @@ if [[ $NEG_PREMISE -eq 1 ]]; then
   esac
 fi
 
-echo "=== DEBUG: constrained certificate chain ==="
-
-openssl s_client \
-  -connect sberbank.ru:443 \
-  -servername sberbank.ru \
-  -CAfile "$WORK/mc/test-bundle.pem" \
-  -no-CApath \
-  -verify_return_error \
-  -verify_hostname sberbank.ru \
-  -showcerts \
-  </dev/null 2>&1 | tee "$WORK/openssl-debug.log" || true
-
-echo "=== DEBUG: certificate SANs ==="
-openssl s_client \
-  -connect sberbank.ru:443 \
-  -servername sberbank.ru \
-  -showcerts </dev/null 2>/dev/null |
-openssl crl2pkcs7 -nocrl -certfile /dev/stdin 2>/dev/null |
-openssl pkcs7 -print_certs -noout
-
 {
   echo "### Live test: $SITE"
   echo "- fixture SHA-256: \`$FP\`"
