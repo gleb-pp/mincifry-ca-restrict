@@ -11,7 +11,7 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="${MINCIFRY_SCRIPT:-$ROOT_DIR/scripts/certify-linux.sh}"
 FIXTURE="${MINCIFRY_ROOT_FIXTURE:-$ROOT_DIR/certs/russian_trusted_root_ca.cer}"      # the real root committed to the repo
-SITE="${LIVE_SITE:-sberbank.ru}"
+SITE="${LIVE_SITE:-vtb.ru}"
 NEG="${LIVE_NEG_SITE:-alfabank.ru}"      # a Mincifry-signed site that is NOT in our list
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 WORK="$(mktemp -d)"
@@ -60,6 +60,26 @@ if [[ $NEG_PREMISE -eq 1 ]]; then
     *)      echo "  PASS  $NEG rejected (curl exit $rc)" ;;
   esac
 fi
+
+echo "=== DEBUG: constrained certificate chain ==="
+
+openssl s_client \
+  -connect sberbank.ru:443 \
+  -servername sberbank.ru \
+  -CAfile "$WORK/mc/test-bundle.pem" \
+  -no-CApath \
+  -verify_return_error \
+  -verify_hostname sberbank.ru \
+  -showcerts \
+  </dev/null 2>&1 | tee "$WORK/openssl-debug.log" || true
+
+echo "=== DEBUG: certificate SANs ==="
+openssl s_client \
+  -connect sberbank.ru:443 \
+  -servername sberbank.ru \
+  -showcerts </dev/null 2>/dev/null |
+openssl crl2pkcs7 -nocrl -certfile /dev/stdin 2>/dev/null |
+openssl pkcs7 -print_certs -noout
 
 {
   echo "### Live test: $SITE"
