@@ -1,0 +1,91 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'      # live test every Monday
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast static checks
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: |
+          for f in scripts/certify-macos.sh scripts/certify-linux.sh tests/*.sh; do bash -n "$f" && echo "ok $f"; done
+      # - name: PowerShell syntax
+      #   shell: pwsh
+      #   run: |
+      #     $bad = $false
+      #     foreach ($f in 'scripts/certify-windows.ps1', 'tests/run-offline.ps1') {
+      #       $errors = $null; $tokens = $null
+      #       [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$tokens, [ref]$errors) | Out-Null
+      #       if ($errors) { $errors | ForEach-Object { Write-Host "${f}:$($_.Extent.StartLineNumber): $($_.Message)" }; $bad = $true } else { "ok $f" }
+      #     }
+      #     if ($bad) { exit 1 }
+
+  # Offline tests on a fake "Mincifry" PKI (deterministic, no external network).
+  linux-debian:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/run-offline.sh
+
+  linux-containers:
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [fedora:latest, archlinux:latest]
+    steps:
+      - name: Install dependencies
+        run: |
+          if command -v dnf >/dev/null 2>&1; then
+            dnf install -y tar gzip git openssl ca-certificates curl findutils which procps-ng
+          else
+            pacman -Syu --noconfirm tar gzip git openssl ca-certificates curl findutils which procps-ng
+          fi
+      - uses: actions/checkout@v4
+      - run: bash tests/run-offline.sh
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenSSL 3
+        run: brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+      - run: bash tests/run-offline.sh
+
+  # windows:
+  #   runs-on: windows-latest
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       shell: [powershell, pwsh]     # Windows PowerShell 5.1 and PowerShell 7
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Offline test
+  #       shell: ${{ matrix.shell }}
+  #       run: ./tests/run-offline.ps1
+
+  # Live smoke test against the real site. Not blocking: GitHub runners may be geo-blocked by Russian sites.
+  live:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/run-live.sh
+        env:
+          MINCIFRY_ROOT_SHA256: ${{ vars.MINCIFRY_ROOT_SHA256 }}

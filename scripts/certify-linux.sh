@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 #
 # certify-linux.sh — ограничение корневого сертификата Минцифры списком сайтов (Linux)
+
+# Корневой сертификат Минцифры берётся из папки certs/ репозитория. Рабочая папка
+# (по умолчанию ~/mincifry-restricted) создаётся скриптом; другая папка: --workdir ПУТЬ.
 #
 # Что делает:
 #   1. создаёт свой корневой сертификат с nameConstraints (только ваши домены);
@@ -13,18 +16,23 @@
 # сертификаты (ca.crt и new_root_ca.crt из рабочей папки) нужно импортировать в них вручную.
 #
 # Примеры:
-#   ./certify-linux.sh rzd.ru job.alfabank.ru     # список = ровно эти сайты
-#   ./certify-linux.sh --add online.sberbank.ru   # дописать к сохранённому списку
-#   ./certify-linux.sh -f my-sites.txt            # список из файла (по одному на строку)
-#   ./certify-linux.sh --list                     # показать сохранённый список
+#   ./certify-linux.sh rzd.ru tbank.ru          # список = ровно эти сайты
+#   ./certify-linux.sh --add alfabank.ru        # дописать к сохранённому списку
+#   ./certify-linux.sh -f my-sites.txt          # список из файла (по одному на строку)
+#   ./certify-linux.sh -w ~/certs-work rzd.ru   # своя рабочая папка
+#   ./certify-linux.sh --list                   # показать сохранённый список
 #
 set -euo pipefail
 
 # update-ca-certificates и update-ca-trust лежат в sbin, которого может не быть в PATH обычного пользователя
 export PATH="$PATH:/usr/sbin:/sbin"
 
-WORKDIR="${MINCIFRY_DIR:-$HOME/mincifry-restricted}"
-SITES_FILE="$WORKDIR/sites.txt"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_WORKDIR="$HOME/mincifry-restricted"
+WORKDIR="${MINCIFRY_DIR:-$DEFAULT_WORKDIR}"
+WORKDIR_EXPLICIT=0
+if [[ -n "${MINCIFRY_DIR:-}" ]]; then WORKDIR_EXPLICIT=1; fi
 ROOT_CN="Russian Trusted Root CA"
 MY_CN="My-Restricted-Root"
 ROOT_SUBJ="/C=RU/O=The Ministry of Digital Development and Communications/CN=${ROOT_CN}"
@@ -37,21 +45,31 @@ die()  { echo "ОШИБКА: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
 warn() { echo "ВНИМАНИЕ: $*" >&2; }
 
+WORKDIR_READY=0; ROOT_FILE=""; LOG=""
+cleanup() {
+  if [[ -n "$ROOT_FILE" ]]; then rm -f "$ROOT_FILE"; fi
+  if [[ -n "$LOG" ]]; then rm -f "$LOG"; fi
+  if [[ "$WORKDIR_READY" -eq 1 ]]; then rm -f "$WORKDIR/temp.key" "$WORKDIR/ca.key" "$WORKDIR/ca.srl"; fi
+}
+trap cleanup EXIT
+
 usage() {
   cat <<'EOF'
 Использование: certify-linux.sh [опции] [сайт ...]
 
 Опции:
-  -a, --add          добавить сайты к ранее сохранённому списку (по умолчанию список заменяется)
-  -f, --file ФАЙЛ    прочитать сайты из файла (по одному на строку, # — комментарий)
-  -l, --list         показать сохранённый список и выйти
-  -n, --no-install   собрать и проверить сертификаты, но не трогать систему
-  -y, --yes          не спрашивать подтверждение
-  -h, --help         эта справка
+  -a, --add            добавить сайты к ранее сохранённому списку (по умолчанию список заменяется)
+  -f, --file ФАЙЛ      прочитать сайты из файла (по одному на строку, # — комментарий)
+  -l, --list           показать сохранённый список и выйти
+  -w, --workdir ПУТЬ   рабочая папка (по умолчанию ~/mincifry-restricted); создаётся автоматически
+  -r, --root-ca ПУТЬ   корневой сертификат Минцифры (по умолчанию берётся из папки certs/ репозитория)
+  -n, --no-install     собрать и проверить сертификаты, но не трогать систему
+  -y, --yes            не задавать вопросов (в том числе про рабочую папку)
+  -h, --help           эта справка
 
-Переменные окружения:
-  MINCIFRY_DIR   рабочая папка (по умолчанию ~/mincifry-restricted)
-  ROOT_CA        путь к корневому сертификату Минцифры (.cer/.crt/.pem), если скрипт не нашёл его сам
+Переменные окружения (флаги важнее):
+  MINCIFRY_DIR   то же, что --workdir
+  ROOT_CA        то же, что --root-ca
   OPENSSL        путь к openssl (нужен OpenSSL 1.1.1+ с опцией -force_pubkey)
 
 Для каждого сайта автоматически разрешаются и сам домен, и все его поддомены.
@@ -80,6 +98,8 @@ while [[ $# -gt 0 ]]; do
     -l|--list)       DO_LIST=1 ;;
     -n|--no-install) NO_INSTALL=1 ;;
     -y|--yes)        ASSUME_YES=1 ;;
+    -w|--workdir)    shift; [[ $# -gt 0 ]] || die "После --workdir нужен путь к папке"; WORKDIR="$1"; WORKDIR_EXPLICIT=1 ;;
+    -r|--root-ca)    shift; [[ $# -gt 0 ]] || die "После --root-ca нужен путь к файлу"; ROOT_CA="$1" ;;
     -h|--help)       usage; exit 0 ;;
     -*)              die "Неизвестная опция: $1 (см. --help)" ;;
     *)               RAW+="$1"$'\n' ;;
@@ -87,7 +107,13 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-[[ "$(uname -s)" == "Linux" ]] || die "Этот скрипт предназначен для Linux. Для macOS используйте mincifry-certs-macos.sh."
+# Путь к рабочей папке: раскрываем ~ и делаем абсолютным
+case "$WORKDIR" in "~"|"~/"*) WORKDIR="$HOME${WORKDIR#\~}" ;; esac
+case "$WORKDIR" in /*) ;; *) WORKDIR="$PWD/$WORKDIR" ;; esac
+if [[ "$WORKDIR" != "/" ]]; then WORKDIR="${WORKDIR%/}"; fi
+SITES_FILE="$WORKDIR/sites.txt"
+
+[[ "$(uname -s)" == "Linux" ]] || die "Этот скрипт рассчитан на Linux. Для macOS используйте scripts/certify-macos.sh."
 
 if [[ "$EUID" -eq 0 ]]; then
   [[ -z "${SUDO_USER:-}" ]] || die "Не запускайте через sudo: sudo будет вызван только там, где нужно
@@ -99,9 +125,6 @@ fi
 as_root() {
   if [[ "$EUID" -eq 0 ]]; then "$@"; else sudo "$@"; fi
 }
-
-mkdir -p "$WORKDIR"
-chmod 700 "$WORKDIR"
 
 if [[ "$DO_LIST" -eq 1 ]]; then
   if [[ -f "$SITES_FILE" ]]; then cat "$SITES_FILE"; else echo "(список пуст)"; fi
@@ -157,23 +180,32 @@ to_pem() {
   fi
 }
 
-# Где искать скачанные сертификаты: рабочая папка, папка «Загрузки» (в т.ч. русскоязычная)
-SEARCH_DIRS=("$WORKDIR")
-for x in "$(xdg-user-dir DOWNLOAD 2>/dev/null || true)" "$HOME/Downloads" "$HOME/Загрузки"; do
-  [[ -n "$x" && "$x" != "$HOME" && -d "$x" ]] || continue
-  dup=0
-  for y in "${SEARCH_DIRS[@]}"; do [[ "$y" == "$x" ]] && dup=1; done
-  if [[ "$dup" -eq 0 ]]; then SEARCH_DIRS+=("$x"); fi
-done
+# Где искать сертификаты Минцифры: сначала папка certs/ репозитория, затем запасные варианты
+# (рабочая папка и папка «Загрузки»).
+SEARCH_DIRS=()
+add_search_dir() {
+  local x="$1" y
+  [[ -n "$x" && "$x" != "$HOME" && -d "$x" ]] || return 0
+  for y in ${SEARCH_DIRS[@]+"${SEARCH_DIRS[@]}"}; do
+    if [[ "$y" == "$x" ]]; then return 0; fi
+  done
+  SEARCH_DIRS+=("$x")
+}
+add_search_dir "$REPO_DIR/certs"
+add_search_dir "$WORKDIR"
+add_search_dir "$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
+add_search_dir "$HOME/Downloads"
+add_search_dir "$HOME/Загрузки"
 
-# Файлы сертификатов Минцифры в этих папках (ГОСТ-версии пропускаем)
+# Файлы сертификатов Минцифры в этих папках (ГОСТ-версии пропускаем); порядок папок сохраняется
 cert_candidates() {
+  [[ ${#SEARCH_DIRS[@]} -gt 0 ]] || return 0
   find "${SEARCH_DIRS[@]}" -maxdepth 3 -type f \
     \( -iname '*.cer' -o -iname '*.crt' -o -iname '*.pem' \) 2>/dev/null \
-    | grep -iE 'russian|trusted' | grep -vi 'gost' | sort -u || true
+    | grep -iE 'russian|trusted' | grep -vi 'gost' || true
 }
 
-ROOT_FILE="$WORKDIR/root_ca.pem"   # PEM-копия найденного корня
+ROOT_FILE="$(mktemp)"   # PEM-копия найденного корня (временный файл)
 ROOT_SRC=""
 
 # Ищет среди файлов именно корневой сертификат (по имени субъекта), а не Sub CA
@@ -190,9 +222,9 @@ find_root() {
   rm -f "$tmp"
   return 1
 }
-find_root || die "Не найден корневой сертификат '$ROOT_CN' (.cer, .crt или .pem).
-Скачайте его на https://www.gosuslugi.ru/crt и положите в $WORKDIR или в папку «Загрузки»,
-либо укажите путь: ROOT_CA=/путь/к/файлу $0 ...
+find_root || die "Не найден корневой сертификат '$ROOT_CN'.
+Ожидался файл в папке certs/ репозитория ($REPO_DIR/certs). Скачайте его на https://www.gosuslugi.ru/crt
+(.cer, .crt или .pem) и положите туда, либо укажите путь: --root-ca /путь/к/файлу
 (Файлы 'Sub CA' и ГОСТ-версии не подходят — нужен именно Root CA.)"
 
 info "OpenSSL:         $OSSL"
@@ -200,11 +232,29 @@ info "Корень Минцифры: $ROOT_SRC"
 info "Сайты (домен и все поддомены):"
 printf '      %s\n' $LIST
 
+# ---------- рабочая папка ----------
+if [[ "$ASSUME_YES" -ne 1 && "$WORKDIR_EXPLICIT" -ne 1 ]]; then
+  [[ -t 0 ]] || die "Скрипт запущен без терминала, поэтому не может спросить про рабочую папку.
+Укажите её явно (--workdir ПУТЬ) или добавьте -y."
+  echo
+  echo "Рабочая папка: $WORKDIR"
+  if [[ -d "$WORKDIR" ]]; then
+    echo "Папка уже существует: в ней будут перезаписаны ca.crt, new_root_ca.crt, sites.txt и служебные файлы."
+  else
+    echo "Папка будет создана."
+  fi
+  echo "Здесь будут храниться ваши сертификаты (ca.crt, new_root_ca.crt) и список сайтов (sites.txt)."
+  echo "Чтобы выбрать другую папку, запустите скрипт с флагом --workdir ПУТЬ."
+  read -r -p "Использовать эту папку? [y/N] " ans || ans=""
+  [[ "$ans" == "y" || "$ans" == "Y" ]] || { info "Отменено. Укажите папку через --workdir ПУТЬ."; exit 0; }
+fi
+mkdir -p "$WORKDIR" || die "Не удалось создать рабочую папку: $WORKDIR"
+chmod 700 "$WORKDIR"
+WORKDIR_READY=1
+
 # ---------- сборка ----------
 cd "$WORKDIR"
 LOG="$(mktemp)"
-cleanup() { rm -f "$LOG" "$WORKDIR/temp.key" "$WORKDIR/ca.key" "$WORKDIR/ca.srl"; }
-trap cleanup EXIT
 
 run_quiet() {
   if ! "$@" >"$LOG" 2>&1; then cat "$LOG" >&2; die "Команда завершилась с ошибкой: $1 $2 $3"; fi
@@ -229,12 +279,15 @@ run_quiet "$OSSL" req -new -newkey rsa:4096 -nodes \
   -keyout temp.key -out dummy.csr -subj "/CN=Temporary Dummy CSR"
 "$OSSL" x509 -in "$ROOT_FILE" -pubkey -noout > digital-gov.pub
 
-cat > cross.conf <<'EOF'
+# Ограничения по доменам записываются и в переподписанный сертификат: некоторые клиенты (например, curl)
+# принимают «неполную цепочку» и считают его точкой доверия, тогда ограничения только в вашем корне не сработали бы.
+cat > cross.conf <<EOF
 [ cross_ca_ext ]
 subjectKeyIdentifier    = hash
 authorityKeyIdentifier  = keyid:always,issuer
 basicConstraints        = critical, CA:true
 keyUsage                = critical, digitalSignature, cRLSign, keyCertSign
+nameConstraints         = $NC
 EOF
 
 info "Переподписываю корень Минцифры своим ограниченным корнем..."
