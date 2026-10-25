@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # Offline test for macOS / Linux. Changes the SYSTEM trust store: runs only in CI.
-# The script is run from a copy of the repository layout (scripts/, certs/, popular.txt) that contains the
+# The scripts are run from a copy of the repository layout (scripts/, certs/) that contains the
 # FAKE root, exactly like a user would run it after "git clone".
-#   0. no terminal and no -y                          -> refuses to install
+#   0. no terminal and no -y                          -> certify refuses to install
 #   1. before: the fake Mincifry root is not trusted  -> connections fail
 #   2. control: install the UNRESTRICTED root         -> good AND evil succeed (shows the problem)
-#   3. --popular, default work dir (certs/)           -> good OK, evil rejected; only 3 files are generated
+#   3. default work dir (certs/)                      -> good OK, evil rejected; only 3 files are generated
 #   4. --workdir + another list                       -> old list replaced; work dir holds only 3 files
-#   5. --add                                          -> lists are merged
+#   5. --add -f FILE                                  -> lists are merged
 #   6. --list                                         -> prints the saved list
+#   7. uninstall: no terminal and no flags            -> refuses
+#   8. uninstall --certs                              -> certificates are gone, project stays
+#   9. uninstall --all from inside the project        -> refuses, nothing is deleted
+#  10. uninstall --all from the parent directory      -> project folder (with the script itself) is deleted
 set -uo pipefail
 [[ "${CI:-}" == "true" ]] || { echo "This test modifies the system trust store and runs only in CI (CI=true)."; exit 2; }
 
@@ -23,11 +27,11 @@ as_root() { if [[ "$EUID" -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
 
 CURL=curl
 if [[ "$UNAME" == "Darwin" ]]; then
-  SNAME=certify-macos.sh
+  OSDIR=macos
   CURL=/usr/bin/curl                                   # Apple curl uses the system keychain
   export OPENSSL="$(brew --prefix openssl@3)/bin/openssl"
 else
-  SNAME=certify-linux.sh
+  OSDIR=linux
 fi
 OPENSSL="${OPENSSL:-openssl}"; export OPENSSL
 
@@ -66,7 +70,8 @@ expect_files() {   # dir, expected space-separated sorted names
   local got; got="$(ls -1 "$1" | sort | tr '\n' ' ' | sed 's/ $//')"
   if [[ "$got" == "$2" ]]; then pass "files in $(basename "$1"): $got"; else fail "files in $(basename "$1"): '$got', expected '$2'"; fi
 }
-run_script() { bash "$REPO/scripts/$SNAME" -y "$@"; }
+run_script() { bash "$REPO/scripts/$OSDIR/certify.sh" -y "$@"; }
+run_uninstall() { bash "$REPO/scripts/$OSDIR/uninstall.sh" "$@"; }
 run_checked() {   # runs the script, checks the exit code and that the output is short
   local out rc
   out="$(run_script "$@" 2>&1)"; rc=$?
@@ -81,7 +86,7 @@ mkdir -p "$REPO/certs" "$MC"
 cp -R "$ROOT_DIR/scripts" "$REPO/scripts"
 cp "$PKI/root.cer" "$REPO/certs/russian_trusted_root_ca.cer"
 cp "$PKI/sub.cer"  "$REPO/certs/russian_trusted_sub_ca.cer"
-printf '# popular domains (test)\nmincifry-ci.test\n' > "$REPO/popular.txt"
+printf '# sites list (test)\nmincifry-ci.test\n' > "$WORK/sites-list.txt"
 for spec in good:9443 sub2:9444 evil:9445; do
   "$OPENSSL" s_server -accept "${spec#*:}" -cert "$PKI/${spec%%:*}.pem" -key "$PKI/${spec%%:*}.key" \
     -cert_chain "$PKI/sub.pem" -www -quiet >/dev/null 2>&1 &
@@ -94,7 +99,7 @@ done
 "$CURL" -sk -o /dev/null --max-time 5 "https://127.0.0.1:9443/" || { echo "FAIL: local TLS server did not start"; exit 1; }
 
 echo "== 0. no terminal and no -y: must refuse to install"
-bash "$REPO/scripts/$SNAME" --workdir "$MC" mincifry-ci.test </dev/null >/dev/null 2>&1; rc=$?
+bash "$REPO/scripts/$OSDIR/certify.sh" --workdir "$MC" mincifry-ci.test </dev/null >/dev/null 2>&1; rc=$?
 if [[ $rc -ne 0 ]]; then pass "refused without a terminal (exit $rc)"; else fail "expected a refusal without a terminal"; fi
 
 echo "== 1. before: nothing is trusted"
@@ -105,11 +110,11 @@ install_control_root || { echo "FAIL: cannot install the control root"; exit 1; 
 expect_ok "control" good.mincifry-ci.test 9443
 expect_ok "control" evil.not-listed.test 9445
 
-echo "== 3. --popular with the default work dir (certs/)"
-run_checked --popular
-expect_ok       "popular" good.mincifry-ci.test 9443
-expect_ok       "popular" www.good.mincifry-ci.test 9444
-expect_rejected "popular" evil.not-listed.test 9445
+echo "== 3. default work dir (certs/)"
+run_checked mincifry-ci.test
+expect_ok       "default" good.mincifry-ci.test 9443
+expect_ok       "default" www.good.mincifry-ci.test 9444
+expect_rejected "default" evil.not-listed.test 9445
 expect_files "$REPO/certs" "ca.crt new_root_ca.crt russian_trusted_root_ca.cer russian_trusted_sub_ca.cer sites.txt"
 
 echo "== 4. --workdir with another list: unrelated.test (old list must be replaced)"
@@ -118,14 +123,33 @@ expect_rejected "replaced" good.mincifry-ci.test 9443
 expect_rejected "replaced" evil.not-listed.test 9445
 expect_files "$MC" "ca.crt new_root_ca.crt sites.txt"
 
-echo "== 5. --add: lists are merged"
-run_checked --workdir "$MC" --add mincifry-ci.test
+echo "== 5. --add -f FILE: lists are merged"
+run_checked --workdir "$MC" --add -f "$WORK/sites-list.txt"
 expect_ok       "merged" good.mincifry-ci.test 9443
 expect_rejected "merged" evil.not-listed.test 9445
 
 echo "== 6. --list"
-n="$(bash "$REPO/scripts/$SNAME" --workdir "$MC" --list | wc -l | tr -d ' ')"
+n="$(bash "$REPO/scripts/$OSDIR/certify.sh" --workdir "$MC" --list | wc -l | tr -d ' ')"
 if [[ "$n" == "2" ]]; then pass "--list prints 2 saved sites"; else fail "--list printed $n lines, expected 2"; fi
+
+echo "== 7. uninstall without flags and without a terminal: must refuse"
+run_uninstall </dev/null >/dev/null 2>&1; rc=$?
+if [[ $rc -ne 0 ]]; then pass "refused without a terminal (exit $rc)"; else fail "expected a refusal without a terminal"; fi
+
+echo "== 8. uninstall --certs"
+out="$(run_uninstall --certs -y 2>&1)"; rc=$?
+n="$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+if [[ $rc -eq 0 && $n -le 6 ]]; then pass "certificates removed, concise output ($n lines)"; else fail "uninstall --certs: exit $rc, $n lines: $out"; fi
+expect_rejected "uninstalled" good.mincifry-ci.test 9443
+if [[ -d "$REPO/scripts" ]]; then pass "project folder is still there"; else fail "project folder was removed by --certs"; fi
+
+echo "== 9. uninstall --all from inside the project: must refuse"
+( cd "$REPO" && bash "scripts/$OSDIR/uninstall.sh" --all -y ) >/dev/null 2>&1; rc=$?
+if [[ $rc -ne 0 && -d "$REPO/scripts" ]]; then pass "refused inside the project (exit $rc), nothing deleted"; else fail "expected a refusal inside the project (exit $rc)"; fi
+
+echo "== 10. uninstall --all from the parent directory"
+( cd "$WORK" && bash "repo/scripts/$OSDIR/uninstall.sh" --all -y ) >/dev/null 2>&1; rc=$?
+if [[ $rc -eq 0 && ! -e "$REPO" ]]; then pass "project folder deleted together with the script"; else fail "project folder was not deleted (exit $rc)"; fi
 
 echo
 if [[ $FAILS -eq 0 ]]; then echo "ALL TESTS PASSED"; else echo "$FAILS CHECK(S) FAILED"; exit 1; fi

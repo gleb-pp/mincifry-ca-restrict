@@ -1,40 +1,30 @@
 #!/usr/bin/env bash
 #
-# certify-linux.sh — ограничение корневого сертификата Минцифры списком сайтов (Linux)
+# scripts/linux/certify.sh — ограничение корневого сертификата Минцифры списком сайтов (Linux)
 #
 #   git clone <репозиторий> && cd <репозиторий>
-#   ./scripts/certify-linux.sh --popular                # готовый список популярных сайтов
-#   ./scripts/certify-linux.sh rzd.ru tbank.ru          # свой список
-#   ./scripts/certify-linux.sh --add alfabank.ru        # дописать к сохранённому списку
-#   ./scripts/certify-linux.sh --help
+#   ./scripts/linux/certify.sh rzd.ru job.alfabank.ru
+#   ./scripts/linux/certify.sh --help
 #
-# Поддерживаются Debian/Ubuntu, Fedora и Arch. Общая логика — в scripts/lib/common.sh.
+# Поддерживаются Debian/Ubuntu, Fedora и Arch. Общая логика — в scripts/common.sh.
 # Firefox и Chrome/Chromium на Linux не читают системное хранилище: импортируйте в них
 # certs/ca.crt и certs/new_root_ca.crt вручную (см. README).
 set -euo pipefail
 export PATH="$PATH:/usr/sbin:/sbin"      # update-ca-* лежат в sbin, которого может не быть в PATH
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_NAME="certify-linux.sh"
+SCRIPT_NAME="scripts/linux/certify.sh"
 USAGE_EXTRA=", OPENSSL (путь к openssl: нужен OpenSSL 1.1.1+ с опцией -force_pubkey)"
 OPENSSL_HINT="Не найден OpenSSL с поддержкой -force_pubkey (нужна версия 1.1.1 или новее).
 Обновите пакет openssl или укажите путь: OPENSSL=/путь/к/openssl $SCRIPT_NAME ..."
-# shellcheck source=common.sh
-source "$SCRIPT_DIR/common.sh"
+# shellcheck source=../common.sh
+source "$SCRIPT_DIR/../common.sh"
 
-# имена файлов в системном хранилище (на Debian/Ubuntu обязательно расширение .crt)
-OUR_CA_NAME="mincifry-restricted-root.crt"
-OUR_RU_NAME="mincifry-restricted-russian-root.crt"
-ANCHOR_DIR=""; UPDATE_CMD=(); BACKEND=""; FOREIGN=""
-
-as_root() { if [[ "$EUID" -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
+FOREIGN=""
 
 platform_check() {
-  [[ "$(uname -s)" == "Linux" ]] || die "Этот скрипт рассчитан на Linux. Для macOS используйте scripts/certify-macos.sh."
-  if [[ "$EUID" -eq 0 ]]; then
-    [[ -z "${SUDO_USER:-}" ]] || die "Не запускайте через sudo: sudo будет вызван только там, где нужно."
-    warn "скрипт запущен от root."
-  fi
+  check_linux
+  if [[ "$EUID" -eq 0 ]]; then warn "скрипт запущен от root."; fi
 }
 
 platform_find_openssl() {
@@ -51,23 +41,6 @@ platform_find_openssl() {
 platform_search_dirs() {
   add_search_dir "$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
   add_search_dir "$HOME/Загрузки"
-}
-
-detect_trust_backend() {
-  local upd
-  if upd="$(command -v update-ca-certificates 2>/dev/null)" && [[ -f /etc/debian_version ]]; then
-    ANCHOR_DIR=/usr/local/share/ca-certificates; UPDATE_CMD=("$upd" --fresh); BACKEND="Debian/Ubuntu"
-  elif upd="$(command -v update-ca-trust 2>/dev/null)"; then
-    if [[ -d /etc/pki/ca-trust/source/anchors ]]; then              # Fedora
-      ANCHOR_DIR=/etc/pki/ca-trust/source/anchors; UPDATE_CMD=("$upd"); BACKEND="Fedora"
-    elif [[ -d /etc/ca-certificates/trust-source/anchors ]]; then   # Arch
-      ANCHOR_DIR=/etc/ca-certificates/trust-source/anchors; UPDATE_CMD=("$upd"); BACKEND="Arch"
-    else
-      return 1
-    fi
-  else
-    return 1
-  fi
 }
 
 # Где мог остаться оригинальный корень (или Sub CA) Минцифры, в том числе по статье-первоисточнику.

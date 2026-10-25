@@ -1,9 +1,10 @@
 # shellcheck shell=bash
-# scripts/lib/common.sh — общая часть certify-linux.sh и certify-macos.sh.
+# scripts/common.sh — общая часть скриптов scripts/linux/*.sh и scripts/macos/*.sh.
 # Подключается через `source` (сам по себе не запускается). Платформенный скрипт должен до подключения задать
 # SCRIPT_DIR и SCRIPT_NAME, а после — определить функции-«хуки»:
-#   platform_check, platform_find_openssl, platform_prepare, platform_confirm_text, platform_install, platform_done
-# и переменную OPENSSL_HINT (подсказка, если OpenSSL не найден). Необязательно: platform_search_dirs, USAGE_EXTRA.
+#   certify.sh:   platform_check, platform_find_openssl, platform_prepare, platform_confirm_text, platform_install, platform_done
+#                 (+ переменная OPENSSL_HINT; необязательно: platform_search_dirs, USAGE_EXTRA)
+#   uninstall.sh: platform_check, platform_uninstall_certs
 
 ROOT_CN="Russian Trusted Root CA"
 MY_CN="My-Restricted-Root"
@@ -11,13 +12,13 @@ ROOT_SUBJ="/C=RU/O=The Ministry of Digital Development and Communications/CN=${R
 DOMAIN_RE='^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z0-9-]{2,}$'
 VERIFY_MAX=5          # сколько сайтов из списка проверять по сети
 
-REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 
 die()  { echo "ОШИБКА: $*" >&2; exit 1; }
 warn() { echo "ВНИМАНИЕ: $*" >&2; }
 say()  { echo "$*"; }
 
-MODE_ADD=0; ASSUME_YES=0; NO_INSTALL=0; DO_LIST=0; POPULAR=0; VERBOSE=0
+MODE_ADD=0; ASSUME_YES=0; NO_INSTALL=0; DO_LIST=0; VERBOSE=0
 RAW=""
 WORKDIR="${MINCIFRY_DIR:-$REPO_DIR/certs}"
 ROOT_CA="${ROOT_CA:-}"
@@ -33,8 +34,6 @@ usage() {
 Использование: $SCRIPT_NAME [опции] [сайт ...]
 
 Опции:
-  -p, --popular        взять за основу готовый список популярных российских сайтов (popular.txt);
-                       свои сайты можно добавить к нему
   -a, --add            добавить сайты к ранее сохранённому списку (по умолчанию список заменяется)
   -f, --file ФАЙЛ      прочитать сайты из файла (по одному на строку, # — комментарий)
   -l, --list           показать сохранённый список и выйти
@@ -66,7 +65,6 @@ list_file_lines() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -p|--popular)    POPULAR=1 ;;
       -a|--add)        MODE_ADD=1 ;;
       -f|--file)       shift; [[ $# -gt 0 ]] || die "После -f нужен путь к файлу"
                        [[ -r "$1" ]] || die "Не могу прочитать файл: $1"
@@ -106,10 +104,6 @@ LIST=""; N_SITES=0
 resolve_sites() {
   local raw="" line d
   if [[ "$MODE_ADD" -eq 1 && -f "$SITES_FILE" ]]; then raw+="$(cat "$SITES_FILE")"$'\n'; fi
-  if [[ "$POPULAR" -eq 1 ]]; then
-    [[ -r "$REPO_DIR/popular.txt" ]] || die "Не найден список популярных сайтов: $REPO_DIR/popular.txt"
-    raw+="$(list_file_lines "$REPO_DIR/popular.txt")"$'\n'
-  fi
   raw+="$RAW"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
@@ -118,7 +112,7 @@ resolve_sites() {
     LIST+="$d"$'\n'
   done <<< "$raw"
   LIST="$(printf '%s' "$LIST" | sed '/^$/d' | sort -u)"
-  [[ -n "$LIST" ]] || die "Не указано ни одного сайта: передайте домены или флаг --popular (см. --help)."
+  [[ -n "$LIST" ]] || die "Не указано ни одного сайта: передайте домены или файл со списком (-f), см. --help."
   N_SITES="$(printf '%s\n' "$LIST" | wc -l | tr -d ' ')"
 }
 
@@ -248,6 +242,114 @@ verify_sites() {
     fi
   done <<< "$sample"
   say "Проверено $checked из $N_SITES: OK $ok, нет связи $nolink, ошибок $bad"
+}
+
+# ---------- общее для Linux ----------
+OUR_CA_NAME="mincifry-restricted-root.crt"            # на Debian/Ubuntu обязательно расширение .crt
+OUR_RU_NAME="mincifry-restricted-russian-root.crt"
+ANCHOR_DIR=""; UPDATE_CMD=(); BACKEND=""
+
+as_root() { if [[ "$EUID" -eq 0 ]]; then "$@"; else sudo "$@"; fi; }
+
+check_linux() {
+  [[ "$(uname -s)" == "Linux" ]] || die "Этот скрипт рассчитан на Linux. Для macOS используйте scripts/macos/."
+  if [[ "$EUID" -eq 0 && -n "${SUDO_USER:-}" ]]; then die "Не запускайте через sudo: sudo будет вызван только там, где нужно."; fi
+}
+
+detect_trust_backend() {
+  local upd
+  if upd="$(command -v update-ca-certificates 2>/dev/null)" && [[ -f /etc/debian_version ]]; then
+    ANCHOR_DIR=/usr/local/share/ca-certificates; UPDATE_CMD=("$upd" --fresh); BACKEND="Debian/Ubuntu"
+  elif upd="$(command -v update-ca-trust 2>/dev/null)"; then
+    if [[ -d /etc/pki/ca-trust/source/anchors ]]; then              # Fedora
+      ANCHOR_DIR=/etc/pki/ca-trust/source/anchors; UPDATE_CMD=("$upd"); BACKEND="Fedora"
+    elif [[ -d /etc/ca-certificates/trust-source/anchors ]]; then   # Arch
+      ANCHOR_DIR=/etc/ca-certificates/trust-source/anchors; UPDATE_CMD=("$upd"); BACKEND="Arch"
+    else
+      return 1
+    fi
+  else
+    return 1
+  fi
+}
+
+# ---------- общее для macOS ----------
+KEYCHAIN="/Library/Keychains/System.keychain"
+
+check_macos() {
+  [[ "$(uname -s)" == "Darwin" ]] || die "Скрипт рассчитан на macOS. Для Linux используйте scripts/linux/."
+  [[ "$EUID" -ne 0 ]] || die "Не запускайте через sudo: sudo будет вызван только там, где нужно."
+}
+
+remove_cert() {   # удаляет из системной связки все сертификаты с таким именем
+  local cn="$1" n=0
+  while sudo security delete-certificate -c "$cn" "$KEYCHAIN" >/dev/null 2>&1; do
+    n=$((n + 1)); if [[ "$n" -ge 10 ]]; then break; fi
+  done
+  return 0
+}
+
+# ---------- удаление (uninstall.sh) ----------
+uninstall_usage() {
+  cat <<EOF
+Использование: bash <папка проекта>/scripts/<ОС>/uninstall.sh [опции]
+
+Без опций скрипт спросит, что удалить.
+  -c, --certs   удалить только сертификаты из системы
+  -a, --all     удалить всё: сертификаты и папку проекта целиком
+  -y, --yes     не спрашивать подтверждение
+  -h, --help    эта справка
+
+Для --all запускайте скрипт из папки выше проекта (не изнутри него).
+EOF
+}
+
+# Перед удалением папки проверяем, что это действительно наш проект и мы не стоим внутри неё
+guard_project_dir() {
+  local here; here="$(pwd -P)"
+  [[ -f "$REPO_DIR/scripts/common.sh" && -d "$REPO_DIR/certs" ]] || die "Папка $REPO_DIR не похожа на проект, удалять не буду."
+  case "$REPO_DIR" in /|"$HOME"|"") die "Отказываюсь удалять $REPO_DIR." ;; esac
+  case "$here/" in "$REPO_DIR"/*) die "Вы находитесь внутри папки проекта. Перейдите выше (cd ..) и запустите скрипт снова." ;; esac
+}
+
+uninstall_main() {
+  local mode="" choice ans
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -c|--certs) mode=certs ;;
+      -a|--all)   mode=all ;;
+      -y|--yes)   ASSUME_YES=1 ;;
+      -h|--help)  uninstall_usage; exit 0 ;;
+      *)          die "Неизвестная опция: $1 (см. --help)" ;;
+    esac
+    shift
+  done
+  platform_check
+  TMPD="$(mktemp -d)"; LOG="$TMPD/log"; trap cleanup EXIT
+
+  if [[ -z "$mode" ]]; then
+    [[ -t 0 ]] || die "Нужен терминал или опция --certs / --all (см. --help)."
+    echo "Что удалить?"
+    echo "  1) сертификаты из системы"
+    echo "  2) весь проект: сертификаты и папку $REPO_DIR"
+    read -r -p "Выбор [1/2]: " choice || choice=""
+    case "$choice" in 1) mode=certs ;; 2) mode=all ;; *) say "Отменено."; exit 0 ;; esac
+  fi
+  if [[ "$mode" == "all" ]]; then guard_project_dir; fi
+
+  if [[ "$ASSUME_YES" -ne 1 ]]; then
+    [[ -t 0 ]] || die "Нужен терминал для подтверждения: добавьте -y."
+    if [[ "$mode" == "all" ]]; then say "Будут удалены сертификаты из системы и папка $REPO_DIR (вместе с этим скриптом)."
+    else say "Будут удалены сертификаты из системы."; fi
+    read -r -p "Вы уверены? [y/N] " ans || ans=""
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || { say "Отменено."; exit 0; }
+  fi
+
+  platform_uninstall_certs
+  if [[ "$mode" == "all" ]]; then
+    rm -rf "$REPO_DIR"
+    say "Папка проекта удалена: $REPO_DIR"
+  fi
 }
 
 mincifry_main() {

@@ -9,10 +9,10 @@ set -uo pipefail
 [[ "${CI:-}" == "true" ]] || { echo "This test modifies the system trust store and runs only in CI (CI=true)."; exit 2; }
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="${MINCIFRY_SCRIPT:-$ROOT_DIR/scripts/certify-linux.sh}"
+SCRIPT="${MINCIFRY_SCRIPT:-$ROOT_DIR/scripts/linux/certify.sh}"
 FIXTURE="${MINCIFRY_ROOT_FIXTURE:-$ROOT_DIR/certs/russian_trusted_root_ca.cer}"      # the real root committed to the repo
-SITE="${LIVE_SITE:-vtb.ru}"
-NEG="${LIVE_NEG_SITE:-alfabank.ru}"      # a Mincifry-signed site that is NOT in our list
+SITE="${LIVE_SITE:-rzd.ru}"
+NEG="${LIVE_NEG_SITE:-online.sberbank.ru}"      # a Mincifry-signed site that is NOT in our list
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 WORK="$(mktemp -d)"
 
