@@ -1,31 +1,24 @@
 #!/usr/bin/env bash
 #
-# certify-macos.sh — ограничение корневого сертификата Минцифры списком сайтов (macOS)
+# scripts/macos/certify.sh — ограничение корневого сертификата Минцифры списком сайтов (macOS)
 #
 #   git clone <репозиторий> && cd <репозиторий>
-#   ./scripts/certify-macos.sh --popular                # готовый список популярных сайтов
-#   ./scripts/certify-macos.sh rzd.ru tbank.ru          # свой список
-#   ./scripts/certify-macos.sh --add alfabank.ru        # дописать к сохранённому списку
-#   ./scripts/certify-macos.sh --help
+#   ./scripts/macos/certify.sh rzd.ru job.alfabank.ru
+#   ./scripts/macos/certify.sh --help
 #
-# Нужен Homebrew и OpenSSL 3 (brew install openssl@3). Общая логика — в scripts/lib/common.sh.
+# Нужен Homebrew и OpenSSL 3 (brew install openssl@3). Общая логика — в scripts/common.sh.
 # Firefox использует своё хранилище: импортируйте в него certs/ca.crt и certs/new_root_ca.crt вручную (см. README).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_NAME="certify-macos.sh"
+SCRIPT_NAME="scripts/macos/certify.sh"
 USAGE_EXTRA=""
 OPENSSL_HINT="Не найден OpenSSL 3 от Homebrew. Установите: brew install openssl@3
 (системный LibreSSL не поддерживает нужную опцию -force_pubkey)."
-# shellcheck source=common.sh
-source "$SCRIPT_DIR/common.sh"
+# shellcheck source=../common.sh
+source "$SCRIPT_DIR/../common.sh"
 
-KEYCHAIN="/Library/Keychains/System.keychain"
-
-platform_check() {
-  [[ "$(uname -s)" == "Darwin" ]] || die "Скрипт рассчитан на macOS. Для Linux используйте scripts/certify-linux.sh."
-  [[ "$EUID" -ne 0 ]] || die "Не запускайте через sudo: sudo будет вызван только там, где нужно."
-}
+platform_check() { check_macos; }
 
 platform_find_openssl() {
   local prefix c
@@ -41,14 +34,6 @@ platform_prepare() { :; }
 platform_confirm_text() {
   echo "Из системной связки ключей будут удалены сертификаты '$MY_CN', '$ROOT_CN' и 'Russian Trusted Sub CA'"
   echo "(включая оригинальный корень Минцифры, если он был установлен), затем установлены новые."
-}
-
-remove_cert() {
-  local cn="$1" n=0
-  while sudo security delete-certificate -c "$cn" "$KEYCHAIN" >/dev/null 2>&1; do
-    n=$((n + 1)); [[ "$n" -ge 10 ]] && break
-  done
-  return 0
 }
 
 platform_install() {

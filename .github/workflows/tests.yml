@@ -19,12 +19,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Bash syntax
         run: |
-          for f in scripts/certify-macos.sh scripts/certify-linux.sh scripts/lib/common.sh tests/*.sh; do bash -n "$f" && echo "ok $f"; done
+          for f in scripts/common.sh scripts/linux/*.sh scripts/macos/*.sh tests/*.sh; do bash -n "$f" && echo "ok $f"; done
       # - name: PowerShell syntax
       #   shell: pwsh
       #   run: |
       #     $bad = $false
-      #     foreach ($f in 'scripts/certify-windows.ps1', 'tests/run-offline.ps1') {
+      #     foreach ($f in 'scripts/windows/certify.ps1', 'scripts/windows/uninstall.ps1', 'tests/run-offline.ps1') {
       #       $errors = $null; $tokens = $null
       #       [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$tokens, [ref]$errors) | Out-Null
       #       if ($errors) { $errors | ForEach-Object { Write-Host "${f}:$($_.Extent.StartLineNumber): $($_.Message)" }; $bad = $true } else { "ok $f" }
