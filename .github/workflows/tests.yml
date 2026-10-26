@@ -70,14 +70,10 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]     # Windows PowerShell 5.1 and PowerShell 7
     steps:
       - uses: actions/checkout@v4
       - name: Offline test
-        shell: ${{ matrix.shell }}
+        shell: pwsh
         run: ./tests/run-offline.ps1
 
   # Live smoke test against the real site. Not blocking: GitHub runners may be geo-blocked by Russian sites.

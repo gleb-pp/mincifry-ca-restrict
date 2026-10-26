@@ -31,8 +31,8 @@
 
 | ОС | Требования |
 |----|------------|
-| **Linux** | Ubuntu / Debian / Fedora / Arch; `openssl` 1.1.1 или новее; `sudo` |
-| **macOS** | [Homebrew](https://brew.sh) и OpenSSL 3: `brew install openssl@3` (системный LibreSSL не подходит) |
+| **Linux** | Ubuntu / Debian / Fedora / Arch; `openssl`; `sudo` |
+| **macOS** | `brew install openssl@3` |
 | **Windows** | Windows 10 (1803+) или PowerShell 7 |
 
 ## 🚀 Инструкция по установке
@@ -80,11 +80,9 @@ powershell -ExecutionPolicy Bypass -File .\certify.ps1 rzd.ru tbank.ru
 
 - **Firefox**: Настройки → Приватность и защита → Сертификаты → Просмотр сертификатов → Центры сертификации. Импортируйте файлы `mincifry-ca-restrict/certs/ca.crt` (поставьте галочку «Доверять при идентификации веб-сайтов») и `mincifry-ca-restrict/certs/new_root_ca.crt` (галочки не ставьте).
 
-После импорта сертификатов перезапустите браузер.
-
 ### 4. Готово!
 
-Теперь сайты из списка должны открываться без предупреждений, а сайты вне списка, требующие сертификаты Минцифры, должны выдавать ошибку SSL. 
+Теперь сайты из списка должны открываться без предупреждений, а сайты вне списка, требующие сертификаты Минцифры, — выдавать ошибку SSL. 
 
 **Для Windows**
 
