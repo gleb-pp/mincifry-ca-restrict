@@ -2,11 +2,11 @@
 # Offline test for macOS / Linux. Changes the SYSTEM trust store: runs only in CI.
 # The scripts are run from a copy of the repository layout (scripts/, certs/) that contains the
 # FAKE root, exactly like a user would run it after "git clone".
-#   0. no terminal and no -y                          -> certify refuses to install
+#   0. no terminal and no -y                          -> certify refuses to install; removed options are rejected
 #   1. before: the fake Mincifry root is not trusted  -> connections fail
 #   2. control: install the UNRESTRICTED root         -> good AND evil succeed (shows the problem)
-#   3. default work dir (certs/)                      -> good OK, evil rejected; only 3 files are generated
-#   4. --workdir + another list                       -> old list replaced; work dir holds only 3 files
+#   3. a list of sites                                -> good OK, evil rejected; only 3 files are generated in certs/
+#   4. another list                                   -> the old list is replaced; certs/ holds the same files
 #   5. --add -f FILE                                  -> lists are merged
 #   6. --list                                         -> prints the saved list
 #   7. uninstall: no terminal and no flags            -> refuses
@@ -19,7 +19,7 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 UNAME="$(uname -s)"
 WORK="$(mktemp -d)"
-PKI="$WORK/pki"; MC="$WORK/mc"; REPO="$WORK/repo"
+PKI="$WORK/pki"; REPO="$WORK/repo"
 PIDS=()
 trap 'kill "${PIDS[@]}" 2>/dev/null || true' EXIT
 
@@ -82,7 +82,7 @@ run_checked() {   # runs the script, checks the exit code and that the output is
 
 echo "== setup: fake PKI, repository copy and local TLS servers"
 bash "$ROOT_DIR/tests/fake-pki.sh" "$PKI" >/dev/null
-mkdir -p "$REPO/certs" "$MC"
+mkdir -p "$REPO/certs"
 cp -R "$ROOT_DIR/scripts" "$REPO/scripts"
 cp "$PKI/root.cer" "$REPO/certs/russian_trusted_root_ca.cer"
 cp "$PKI/sub.cer"  "$REPO/certs/russian_trusted_sub_ca.cer"
@@ -99,8 +99,11 @@ done
 "$CURL" -sk -o /dev/null --max-time 5 "https://127.0.0.1:9443/" || { echo "FAIL: local TLS server did not start"; exit 1; }
 
 echo "== 0. no terminal and no -y: must refuse to install"
-bash "$REPO/scripts/$OSDIR/certify.sh" --workdir "$MC" mincifry-ci.test </dev/null >/dev/null 2>&1; rc=$?
+bash "$REPO/scripts/$OSDIR/certify.sh" mincifry-ci.test </dev/null >/dev/null 2>&1; rc=$?
 if [[ $rc -ne 0 ]]; then pass "refused without a terminal (exit $rc)"; else fail "expected a refusal without a terminal"; fi
+bash "$REPO/scripts/$OSDIR/certify.sh" -y --workdir "$WORK/x" mincifry-ci.test >/dev/null 2>&1; rc=$?
+bash "$REPO/scripts/$OSDIR/certify.sh" -y -r "$PKI/root.cer" mincifry-ci.test >/dev/null 2>&1; rc2=$?
+if [[ $rc -ne 0 && $rc2 -ne 0 && ! -e "$WORK/x" ]]; then pass "removed options (--workdir, -r) are rejected"; else fail "removed options still accepted (exit $rc, $rc2)"; fi
 
 echo "== 1. before: nothing is trusted"
 expect_rejected "before" good.mincifry-ci.test 9443
@@ -110,26 +113,26 @@ install_control_root || { echo "FAIL: cannot install the control root"; exit 1; 
 expect_ok "control" good.mincifry-ci.test 9443
 expect_ok "control" evil.not-listed.test 9445
 
-echo "== 3. default work dir (certs/)"
+echo "== 3. a list of sites"
 run_checked mincifry-ci.test
 expect_ok       "default" good.mincifry-ci.test 9443
 expect_ok       "default" www.good.mincifry-ci.test 9444
 expect_rejected "default" evil.not-listed.test 9445
 expect_files "$REPO/certs" "ca.crt new_root_ca.crt russian_trusted_root_ca.cer russian_trusted_sub_ca.cer sites.txt"
 
-echo "== 4. --workdir with another list: unrelated.test (old list must be replaced)"
-run_checked --workdir "$MC" unrelated.test
+echo "== 4. another list: unrelated.test (old list must be replaced)"
+run_checked unrelated.test
 expect_rejected "replaced" good.mincifry-ci.test 9443
 expect_rejected "replaced" evil.not-listed.test 9445
-expect_files "$MC" "ca.crt new_root_ca.crt sites.txt"
+expect_files "$REPO/certs" "ca.crt new_root_ca.crt russian_trusted_root_ca.cer russian_trusted_sub_ca.cer sites.txt"
 
 echo "== 5. --add -f FILE: lists are merged"
-run_checked --workdir "$MC" --add -f "$WORK/sites-list.txt"
+run_checked --add -f "$WORK/sites-list.txt"
 expect_ok       "merged" good.mincifry-ci.test 9443
 expect_rejected "merged" evil.not-listed.test 9445
 
 echo "== 6. --list"
-n="$(bash "$REPO/scripts/$OSDIR/certify.sh" --workdir "$MC" --list | wc -l | tr -d ' ')"
+n="$(bash "$REPO/scripts/$OSDIR/certify.sh" --list | wc -l | tr -d ' ')"
 if [[ "$n" == "2" ]]; then pass "--list prints 2 saved sites"; else fail "--list printed $n lines, expected 2"; fi
 
 echo "== 7. uninstall without flags and without a terminal: must refuse"

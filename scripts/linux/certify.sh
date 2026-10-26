@@ -14,7 +14,7 @@ export PATH="$PATH:/usr/sbin:/sbin"      # update-ca-* лежат в sbin, ко�
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="scripts/linux/certify.sh"
-USAGE_EXTRA=", OPENSSL (путь к openssl: нужен OpenSSL 1.1.1+ с опцией -force_pubkey)"
+USAGE_ENV="OPENSSL — путь к openssl (нужен OpenSSL 1.1.1+ с опцией -force_pubkey)"
 OPENSSL_HINT="Не найден OpenSSL с поддержкой -force_pubkey (нужна версия 1.1.1 или новее).
 Обновите пакет openssl или укажите путь: OPENSSL=/путь/к/openssl $SCRIPT_NAME ..."
 # shellcheck source=../common.sh
@@ -36,11 +36,6 @@ platform_find_openssl() {
     if grep -q 'force_pubkey' <<<"$help"; then command -v "$c"; return 0; fi
   done
   return 1
-}
-
-platform_search_dirs() {
-  add_search_dir "$(xdg-user-dir DOWNLOAD 2>/dev/null || true)"
-  add_search_dir "$HOME/Загрузки"
 }
 
 # Где мог остаться оригинальный корень (или Sub CA) Минцифры, в том числе по статье-первоисточнику.
