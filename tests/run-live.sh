@@ -50,7 +50,7 @@ else echo "  NOTE  $NEG is not accepted with the unrestricted root: negative che
 
 echo "== 3. our script"
 FAILS=0
-if ! bash "$SCRIPT" -y --workdir "$WORK/mc" "$SITE"; then echo "  FAIL  script exited with an error"; FAILS=$((FAILS+1)); fi
+if ! bash "$SCRIPT" -y "$SITE"; then echo "  FAIL  script exited with an error"; FAILS=$((FAILS+1)); fi
 if curl_ok "$SITE"; then echo "  PASS  $SITE accepted after the script"; else echo "  FAIL  $SITE rejected after the script"; FAILS=$((FAILS+1)); fi
 if [[ $NEG_PREMISE -eq 1 ]]; then
   curl_ok "$NEG"; rc=$?

@@ -3,7 +3,7 @@
 # Подключается через `source` (сам по себе не запускается). Платформенный скрипт должен до подключения задать
 # SCRIPT_DIR и SCRIPT_NAME, а после — определить функции-«хуки»:
 #   certify.sh:   platform_check, platform_find_openssl, platform_prepare, platform_confirm_text, platform_install, platform_done
-#                 (+ переменная OPENSSL_HINT; необязательно: platform_search_dirs, USAGE_EXTRA)
+#                 (+ переменная OPENSSL_HINT; необязательно: USAGE_ENV — строка про переменные окружения для --help)
 #   uninstall.sh: platform_check, platform_uninstall_certs
 
 ROOT_CN="Russian Trusted Root CA"
@@ -20,8 +20,8 @@ say()  { echo "$*"; }
 
 MODE_ADD=0; ASSUME_YES=0; NO_INSTALL=0; DO_LIST=0; VERBOSE=0
 RAW=""
-WORKDIR="${MINCIFRY_DIR:-$REPO_DIR/certs}"
-ROOT_CA="${ROOT_CA:-}"
+WORKDIR="$REPO_DIR/certs"        # корень Минцифры лежит здесь же; сюда пишутся и наши сертификаты
+SITES_FILE="$WORKDIR/sites.txt"
 TMPD=""; ROOT_FILE=""; ROOT_SRC=""; LOG=""
 
 cleanup() { if [[ -n "$TMPD" ]]; then rm -rf "$TMPD"; fi; }
@@ -30,6 +30,8 @@ cleanup() { if [[ -n "$TMPD" ]]; then rm -rf "$TMPD"; fi; }
 short() { local p="$1"; if [[ "$p" == "$REPO_DIR/"* ]]; then p="${p#"$REPO_DIR"/}"; fi; printf '%s' "$p"; }
 
 usage() {
+  local env_line=""
+  if [[ -n "${USAGE_ENV:-}" ]]; then env_line="Переменные окружения: $USAGE_ENV"$'\n\n'; fi
   cat <<EOF
 Использование: $SCRIPT_NAME [опции] [сайт ...]
 
@@ -37,15 +39,12 @@ usage() {
   -a, --add            добавить сайты к ранее сохранённому списку (по умолчанию список заменяется)
   -f, --file ФАЙЛ      прочитать сайты из файла (по одному на строку, # — комментарий)
   -l, --list           показать сохранённый список и выйти
-  -w, --workdir ПУТЬ   куда записать сертификаты (по умолчанию папка certs/ репозитория)
-  -r, --root-ca ПУТЬ   корневой сертификат Минцифры (по умолчанию из папки certs/ репозитория)
   -n, --no-install     только собрать и проверить сертификаты, систему не менять
   -y, --yes            не спрашивать подтверждение установки
   -v, --verbose        показывать результат проверки по каждому сайту
   -h, --help           эта справка
 
-Переменные окружения (флаги важнее): MINCIFRY_DIR (= --workdir), ROOT_CA (= --root-ca)${USAGE_EXTRA:-}
-
+${env_line}Сертификаты и список сайтов (sites.txt) записываются в папку certs/ репозитория.
 Для каждого сайта разрешаются и сам домен, и все его поддомены.
 Кириллические домены (.рф) указывайте в punycode (например, xn--p1ai).
 EOF
@@ -70,8 +69,6 @@ parse_args() {
                        [[ -r "$1" ]] || die "Не могу прочитать файл: $1"
                        RAW+="$(list_file_lines "$1")"$'\n' ;;
       -l|--list)       DO_LIST=1 ;;
-      -w|--workdir)    shift; [[ $# -gt 0 ]] || die "После --workdir нужен путь к папке"; WORKDIR="$1" ;;
-      -r|--root-ca)    shift; [[ $# -gt 0 ]] || die "После --root-ca нужен путь к файлу"; ROOT_CA="$1" ;;
       -n|--no-install) NO_INSTALL=1 ;;
       -y|--yes)        ASSUME_YES=1 ;;
       -v|--verbose)    VERBOSE=1 ;;
@@ -81,14 +78,6 @@ parse_args() {
     esac
     shift
   done
-}
-
-# Путь к рабочей папке: раскрываем ~ и делаем абсолютным
-normalize_workdir() {
-  case "$WORKDIR" in "~"|"~/"*) WORKDIR="$HOME${WORKDIR#\~}" ;; esac
-  case "$WORKDIR" in /*) ;; *) WORKDIR="$PWD/$WORKDIR" ;; esac
-  if [[ "$WORKDIR" != "/" ]]; then WORKDIR="${WORKDIR%/}"; fi
-  SITES_FILE="$WORKDIR/sites.txt"
 }
 
 normalize_domain() {
@@ -125,7 +114,7 @@ to_pem() {
   fi
 }
 
-# Где искать сертификаты Минцифры: сначала certs/ репозитория, затем запасные варианты
+# Где искать сертификаты Минцифры: папка certs/ репозитория
 SEARCH_DIRS=()
 add_search_dir() {
   local x="$1" y
@@ -147,7 +136,7 @@ cert_candidates() {
 # Ищет среди файлов именно корневой сертификат (по имени субъекта), а не Sub CA
 find_root() {
   local c tmp cands
-  if [[ -n "$ROOT_CA" ]]; then cands="$ROOT_CA"; else cands="$(cert_candidates)"; fi
+  cands="$(cert_candidates)"
   tmp="$TMPD/candidate.pem"
   while IFS= read -r c; do
     [[ -n "$c" && -f "$c" ]] || continue
@@ -354,7 +343,6 @@ uninstall_main() {
 
 mincifry_main() {
   parse_args "$@"
-  normalize_workdir
   platform_check
 
   if [[ "$DO_LIST" -eq 1 ]]; then
@@ -368,12 +356,9 @@ mincifry_main() {
 
   OSSL="$(platform_find_openssl)" || die "$OPENSSL_HINT"
   add_search_dir "$REPO_DIR/certs"
-  add_search_dir "$WORKDIR"
-  add_search_dir "$HOME/Downloads"
-  if declare -F platform_search_dirs >/dev/null; then platform_search_dirs; fi
   find_root || die "Не найден корневой сертификат '$ROOT_CN'.
 Ожидался файл в папке certs/ репозитория ($REPO_DIR/certs). Скачайте его на https://www.gosuslugi.ru/crt
-(.cer, .crt или .pem) и положите туда, либо укажите путь: --root-ca /путь/к/файлу
+(.cer, .crt или .pem) и положите туда.
 (Файлы 'Sub CA' и ГОСТ-версии не подходят — нужен именно Root CA.)"
 
   say "Корень Минцифры: $(short "$ROOT_SRC")"

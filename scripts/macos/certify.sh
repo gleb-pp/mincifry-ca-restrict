@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="scripts/macos/certify.sh"
-USAGE_EXTRA=""
+USAGE_ENV=""
 OPENSSL_HINT="Не найден OpenSSL 3 от Homebrew. Установите: brew install openssl@3
 (системный LibreSSL не поддерживает нужную опцию -force_pubkey)."
 # shellcheck source=../common.sh
