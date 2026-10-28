@@ -429,6 +429,9 @@ function Main {
     }
   }
 
+  if ($Scope -eq 'CurrentUser') {
+    Write-Host 'Сейчас Windows покажет окно с запросом на установку сертификата. Оно может открыться за другими окнами: найдите его в панели задач и нажмите «Да».'
+  }
   Add-ToStore 'Root' $Scope $caPublic
   Add-ToStore 'CA' $Scope $cross
 
